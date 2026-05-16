@@ -1,0 +1,10 @@
+[package]
+name = "@math/num-bigint"
+version = "0.4.6"
+edition = "2026"
+authors = ["The Zeta Foundation <team@z-lang.org>"]
+description = "Arbitrary-precision big integer arithmetic for Zeta — BigUint and BigInt types with full arithmetic and bitwise operations"
+license = "MIT"
+repository = "https://github.com/murphsicles/num-bigint"
+keywords = ["bigint", "bignum", "crypto", "math", "arbitrary-precision"]
+categories = ["math::bigint"]

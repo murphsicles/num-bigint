@@ -1,0 +1,328 @@
+// BigInt — Signed arbitrary precision integer for Zeta
+// Port of https://github.com/rust-num/num-bigint
+// Wraps BigUint with a sign flag
+
+use biguint::BigUint;
+
+/// Signed big integer — wraps BigUint with sign
+pub struct BigInt {
+    /// Sign: false = non-negative (zero or positive), true = negative
+    negative: bool,
+    /// Absolute value
+    magnitude: BigUint,
+}
+
+impl BigInt {
+    /// Create a BigInt from a BigUint (non-negative)
+    pub fn from_biguint(positive: bool, value: BigUint) -> BigInt {
+        return BigInt {
+            negative: !positive,
+            magnitude: value,
+        };
+    }
+
+    /// Create a BigInt from i64
+    pub fn from_i64(value: i64) -> BigInt {
+        if value < 0 {
+            let mag = BigUint::from_u64((-value) as u64);
+            return BigInt { negative: true, magnitude: mag };
+        }
+        return BigInt { negative: false, magnitude: BigUint::from_u64(value as u64) };
+    }
+
+    /// Create a BigInt from u64
+    pub fn from_u64(value: u64) -> BigInt {
+        return BigInt { negative: false, magnitude: BigUint::from_u64(value) };
+    }
+
+    /// Create a BigInt from u32
+    pub fn from_u32(value: u32) -> BigInt {
+        return BigInt { negative: false, magnitude: BigUint::from_u32(value) };
+    }
+
+    /// Create a BigInt from u8
+    pub fn from_u8(value: u8) -> BigInt {
+        return BigInt { negative: false, magnitude: BigUint::from_u64(value as u64) };
+    }
+
+    /// Create a BigInt from string
+    pub fn from_str(s: str, base: u32) -> BigInt {
+        let len = str_len(s);
+        let negative = len > 0 && s[0] == '-' as u8;
+        let start = if negative { 1 } else { 0 };
+        let digit_str = str_substring(s, start, len);
+        let mag = BigUint::from_str(digit_str, base);
+        return BigInt { negative: negative && !mag.is_zero(), magnitude: mag };
+    }
+
+    /// Zero value
+    pub fn zero() -> BigInt {
+        return BigInt { negative: false, magnitude: BigUint::zero() };
+    }
+
+    /// One value
+    pub fn one() -> BigInt {
+        return BigInt { negative: false, magnitude: BigUint::one() };
+    }
+
+    /// Check if zero
+    pub fn is_zero(&self) -> bool {
+        return self.magnitude.is_zero();
+    }
+
+    /// Check if positive (greater than zero)
+    pub fn is_positive(&self) -> bool {
+        return !self.negative && !self.is_zero();
+    }
+
+    /// Check if negative
+    pub fn is_negative(&self) -> bool {
+        return self.negative;
+    }
+
+    /// Clone this BigInt
+    pub fn clone(&self) -> BigInt {
+        return BigInt {
+            negative: self.negative,
+            magnitude: self.magnitude.clone(),
+        };
+    }
+
+    /// Get absolute value
+    pub fn abs(&self) -> BigInt {
+        return BigInt {
+            negative: false,
+            magnitude: self.magnitude.clone(),
+        };
+    }
+
+    /// Negate this value
+    pub fn neg(&self) -> BigInt {
+        return BigInt {
+            negative: !self.negative && !self.is_zero(),
+            magnitude: self.magnitude.clone(),
+        };
+    }
+
+    /// Sign: -1 (negative), 0 (zero), 1 (positive)
+    pub fn signum(&self) -> i32 {
+        if self.is_zero() {
+            return 0;
+        }
+        if self.negative {
+            return -1;
+        }
+        return 1;
+    }
+
+    /// Addition: self + other
+    pub fn add(&self, other: &BigInt) -> BigInt {
+        if self.negative == other.negative {
+            // Same sign: add magnitudes, keep sign
+            return BigInt {
+                negative: self.negative && !self.is_zero(),
+                magnitude: self.magnitude.add(&other.magnitude),
+            };
+        }
+        // Different signs: compare magnitudes
+        if self.magnitude.is_greater_than(&other.magnitude) {
+            return BigInt {
+                negative: self.negative,
+                magnitude: self.magnitude.sub(&other.magnitude),
+            };
+        }
+        return BigInt {
+            negative: other.negative,
+            magnitude: other.magnitude.sub(&self.magnitude),
+        };
+    }
+
+    /// Subtraction: self - other
+    pub fn sub(&self, other: &BigInt) -> BigInt {
+        return self.add(&other.neg());
+    }
+
+    /// Multiplication: self * other
+    pub fn mul(&self, other: &BigInt) -> BigInt {
+        let sign = self.negative != other.negative;
+        return BigInt {
+            negative: sign && !self.is_zero() && !other.is_zero(),
+            magnitude: self.magnitude.mul(&other.magnitude),
+        };
+    }
+
+    /// Division: self / other (truncated toward zero)
+    pub fn div(&self, other: &BigInt) -> BigInt {
+        if other.is_zero() {
+            return BigInt::zero();
+        }
+        let sign = self.negative != other.negative;
+        let (q, _) = self.magnitude.div_mod(&other.magnitude);
+        return BigInt {
+            negative: sign && !q.is_zero(),
+            magnitude: q,
+        };
+    }
+
+    /// Modulo: self % other (with sign of dividend)
+    pub fn modulo(&self, other: &BigInt) -> BigInt {
+        if other.is_zero() {
+            return BigInt::zero();
+        }
+        let (_, r) = self.magnitude.div_mod(&other.magnitude);
+        let result = BigInt {
+            negative: self.negative && !r.is_zero(),
+            magnitude: r,
+        };
+        if self.negative && !result.is_zero() {
+            return result.add(other);
+        }
+        return result;
+    }
+
+    /// Division with remainder
+    pub fn div_mod(&self, other: &BigInt) -> (BigInt, BigInt) {
+        let (q, r) = self.magnitude.div_mod(&other.magnitude);
+        let sign = self.negative != other.negative;
+        let quotient = BigInt {
+            negative: sign && !q.is_zero(),
+            magnitude: q,
+        };
+        let remainder = BigInt {
+            negative: self.negative && !r.is_zero(),
+            magnitude: r,
+        };
+        return (quotient, remainder);
+    }
+
+    /// Comparison
+    pub fn cmp(&self, other: &BigInt) -> i32 {
+        if self.is_zero() && other.is_zero() {
+            return 0;
+        }
+        if self.negative != other.negative {
+            if self.negative {
+                return -1;
+            }
+            return 1;
+        }
+        // Same sign
+        if self.negative {
+            // Both negative: reverse comparison
+            if self.magnitude.is_greater_than(&other.magnitude) {
+                return -1;
+            }
+            if other.magnitude.is_greater_than(&self.magnitude) {
+                return 1;
+            }
+            return 0;
+        }
+        // Both positive
+        if self.magnitude.is_greater_than(&other.magnitude) {
+            return 1;
+        }
+        if other.magnitude.is_greater_than(&self.magnitude) {
+            return -1;
+        }
+        return 0;
+    }
+
+    /// Bitwise AND (sign-extended)
+    pub fn bit_and(&self, other: &BigInt) -> BigInt {
+        return BigInt {
+            negative: self.negative && other.negative,
+            magnitude: self.magnitude.bit_and(&other.magnitude),
+        };
+    }
+
+    /// Bitwise OR
+    pub fn bit_or(&self, other: &BigInt) -> BigInt {
+        return BigInt {
+            negative: self.negative || other.negative,
+            magnitude: self.magnitude.bit_or(&other.magnitude),
+        };
+    }
+
+    /// Bitwise XOR
+    pub fn bit_xor(&self, other: &BigInt) -> BigInt {
+        return BigInt {
+            negative: self.negative != other.negative,
+            magnitude: self.magnitude.bit_xor(&other.magnitude),
+        };
+    }
+
+    /// Left shift
+    pub fn shl(&self, n: u64) -> BigInt {
+        return BigInt {
+            negative: self.negative,
+            magnitude: self.magnitude.shl(n),
+        };
+    }
+
+    /// Right shift (arithmetic for negative)
+    pub fn shr(&self, n: u64) -> BigInt {
+        let mag = self.magnitude.shr(n);
+        if self.negative && !mag.is_zero() {
+            // Arithmetic shift: keep sign
+            return BigInt { negative: true, magnitude: mag };
+        }
+        return BigInt { negative: self.negative, magnitude: mag };
+    }
+
+    /// Convert to i64 (truncates)
+    pub fn to_i64(&self) -> i64 {
+        let val = self.magnitude.to_u64();
+        if self.negative {
+            return -(val as i64);
+        }
+        return val as i64;
+    }
+
+    /// Convert to decimal string
+    pub fn to_string(&self) -> str {
+        if self.is_zero() {
+            return "0";
+        }
+        let mag_str = self.magnitude.to_string();
+        if self.negative {
+            return "-" + mag_str;
+        }
+        return mag_str;
+    }
+
+    /// Convert to hex string
+    pub fn to_string_hex(&self) -> str {
+        let mag_str = self.magnitude.to_string_hex();
+        if self.negative {
+            return "-" + mag_str;
+        }
+        return mag_str;
+    }
+
+    /// Exponentiation: self^exp
+    pub fn pow(&self, exp: u64) -> BigInt {
+        if exp == 0 {
+            return BigInt::one();
+        }
+        let is_neg = self.negative && exp % 2 != 0;
+        return BigInt {
+            negative: is_neg,
+            magnitude: self.magnitude.pow(exp),
+        };
+    }
+}
+
+// ============================================================
+// External helpers
+// ============================================================
+
+fn str_len(s: str) -> u64 {
+    return __str_len(s);
+}
+
+fn str_substring(s: str, start: u64, end: u64) -> str {
+    return __str_substring(s, start, end);
+}
+
+comptime extern fn __str_len(s: str) -> u64;
+comptime extern fn __str_substring(s: str, start: u64, end: u64) -> str;

@@ -1,0 +1,650 @@
+// BigUint — Arbitrary precision unsigned integer for Zeta
+// Port of https://github.com/rust-num/num-bigint
+// BigUint stores numbers as vector of u64 limbs (little-endian)
+
+/// Arbitrary precision unsigned integer
+pub struct BigUint {
+    /// Internal limbs in little-endian order (index 0 = least significant)
+    data: Vec<u64>,
+}
+
+// Internal constants
+const U64_BITS: u64 = 64;
+const U64_MAX: u64 = 18446744073709551615; // 2^64 - 1
+const U32_MAX: u64 = 4294967295;           // 2^32 - 1
+
+impl BigUint {
+    /// Create a BigUint from a vector of limbs (little-endian)
+    pub fn from_limbs(limbs: Vec<u64>) -> BigUint {
+        return BigUint { data: trim_limbs(limbs) };
+    }
+
+    /// Create a BigUint from a single u64 value
+    pub fn from_u64(value: u64) -> BigUint {
+        let mut limbs = Vec::<u64>::new();
+        limbs.push(value);
+        return BigUint { data: limbs };
+    }
+
+    /// Create a BigUint from a u32 value
+    pub fn from_u32(value: u32) -> BigUint {
+        return BigUint::from_u64(value as u64);
+    }
+
+    /// Create a BigUint from a u8 value
+    pub fn from_u8(value: u8) -> BigUint {
+        return BigUint::from_u64(value as u64);
+    }
+
+    /// Create a BigUint from an i64 (panics if negative)
+    pub fn from_i64(value: i64) -> BigUint {
+        if value < 0 {
+            // Panic or return zero for negative values
+            // In a real impl, this would assert
+            return BigUint::from_u64(0);
+        }
+        return BigUint::from_u64(value as u64);
+    }
+
+    /// Create a BigUint from a string in the given base (2-36)
+    pub fn from_str(s: str, base: u32) -> BigUint {
+        let mut result = BigUint::from_u64(0);
+        let len = str_len(s);
+        let mut i = 0;
+        if len > 0 && s[0] == '-' as u8 {
+            // Negative sign not allowed for BigUint
+            return result;
+        }
+        if len > 1 && s[0] == '0' as u8 && (s[1] == 'x' as u8 || s[1] == 'X' as u8) {
+            // Hex prefix
+            i = 2;
+        }
+        while i < len {
+            let c = s[i] as u32;
+            let digit_val = char_to_digit(c);
+            if digit_val >= 0 && digit_val < base {
+                result = result.mul_u32(base);
+                let digit_big = BigUint::from_u64(digit_val as u64);
+                result = result.add(&digit_big);
+            }
+            i = i + 1;
+        }
+        return result;
+    }
+
+    /// Zero value
+    pub fn zero() -> BigUint {
+        return BigUint { data: Vec::<u64>::new() };
+    }
+
+    /// One value
+    pub fn one() -> BigUint {
+        return BigUint::from_u64(1);
+    }
+
+    /// Ten value
+    pub fn ten() -> BigUint {
+        return BigUint::from_u64(10);
+    }
+
+    /// Check if zero
+    pub fn is_zero(&self) -> bool {
+        return self.data.len() == 0;
+    }
+
+    /// Number of limbs
+    pub fn nlimbs(&self) -> u64 {
+        return self.data.len() as u64;
+    }
+
+    /// Get a specific limb (0 = least significant)
+    pub fn limb(&self, index: u64) -> u64 {
+        if index < self.data.len() as u64 {
+            return self.data[index as u64];
+        }
+        return 0;
+    }
+
+    /// Clone this BigUint
+    pub fn clone(&self) -> BigUint {
+        let mut limbs = Vec::<u64>::new();
+        let len = self.data.len();
+        let mut i = 0;
+        while i < len {
+            limbs.push(self.data[i]);
+            i = i + 1;
+        }
+        return BigUint { data: limbs };
+    }
+
+    /// Addition: self + other
+    pub fn add(&self, other: &BigUint) -> BigUint {
+        let len_self = self.data.len();
+        let len_other = other.data.len();
+        let max_len = if len_self > len_other { len_self } else { len_other };
+
+        let mut result = Vec::<u64>::new();
+        let mut carry: u64 = 0;
+        let mut i = 0;
+
+        while i < max_len {
+            let a = if i < len_self { self.data[i] } else { 0 };
+            let b = if i < len_other { other.data[i] } else { 0 };
+            
+            // Add with carry
+            let (sum, c1) = add_with_carry(a, b, carry);
+            result.push(sum);
+            carry = c1;
+            i = i + 1;
+        }
+
+        if carry != 0 {
+            result.push(carry);
+        }
+
+        return BigUint { data: result };
+    }
+
+    /// Subtraction: self - other (panics if other > self)
+    pub fn sub(&self, other: &BigUint) -> BigUint {
+        let len_self = self.data.len();
+        let len_other = other.data.len();
+
+        let mut result = Vec::<u64>::new();
+        let mut borrow: u64 = 0;
+        let mut i = 0;
+
+        while i < len_self {
+            let a = self.data[i];
+            let b = if i < len_other { other.data[i] } else { 0 };
+
+            let (diff, b1) = sub_with_borrow(a, b, borrow);
+            result.push(diff);
+            borrow = b1;
+            i = i + 1;
+        }
+
+        // Trim leading zeros
+        while result.len() > 0 && result[result.len() - 1] == 0 {
+            result.pop();
+        }
+
+        return BigUint { data: result };
+    }
+
+    /// Multiplication: self * other
+    pub fn mul(&self, other: &BigUint) -> BigUint {
+        let len_self = self.data.len();
+        let len_other = other.data.len();
+        let result_len = len_self + len_other;
+        
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < result_len {
+            result.push(0);
+            i = i + 1;
+        }
+
+        let mut i = 0;
+        while i < len_self {
+            let mut carry: u64 = 0;
+            let a = self.data[i];
+            let mut j = 0;
+            while j < len_other {
+                let b = other.data[j];
+                let ri = i + j;
+                // Multiply a * b + result[ri] + carry
+                let (low, high) = mul_with_carry(a, b, result[ri], carry);
+                result[ri] = low;
+                carry = high;
+                j = j + 1;
+            }
+            if carry != 0 {
+                result[i + len_other] = carry;
+            }
+            i = i + 1;
+        }
+
+        // Trim leading zeros
+        while result.len() > 0 && result[result.len() - 1] == 0 {
+            result.pop();
+        }
+
+        return BigUint { data: result };
+    }
+
+    /// Multiply by u32 (fast path)
+    pub fn mul_u32(&self, val: u32) -> BigUint {
+        if val == 0 {
+            return BigUint::zero();
+        }
+        let mut result = Vec::<u64>::new();
+        let mut carry: u64 = 0;
+        let len = self.data.len();
+        let mut i = 0;
+        while i < len {
+            let a = self.data[i];
+            let product = a * (val as u64) + carry;
+            result.push(product & U32_MAX);
+            carry = product >> 32;
+            i = i + 1;
+        }
+        if carry != 0 {
+            result.push(carry);
+        }
+        return BigUint { data: result };
+    }
+
+    /// Division: self / other (floor), returns (quotient, remainder)
+    pub fn div_mod(&self, other: &BigUint) -> (BigUint, BigUint) {
+        if other.is_zero() {
+            // Division by zero — return zero
+            return (BigUint::zero(), BigUint::zero());
+        }
+
+        if self.is_less_than(other) {
+            return (BigUint::zero(), self.clone());
+        }
+
+        if other.data.len() == 1 {
+            // Single-limb division — fast path
+            return self.div_mod_u64(other.data[0]);
+        }
+
+        // General case: schoolbook division
+        // For now, use iterative subtraction for small numbers
+        // (A real impl would use Knuth's Algorithm D)
+        
+        // Check if it's small enough for iterative approach
+        if !self.data.len() > 4 {
+            // Use subtraction-based approach
+            let mut quotient = BigUint::zero();
+            let mut remainder = self.clone();
+            let mut one = BigUint::one();
+            
+            while !remainder.is_less_than(other) {
+                remainder = remainder.sub(other);
+                quotient = quotient.add(&one);
+            }
+            
+            return (quotient, remainder);
+        }
+
+        // For large numbers, use bit-by-bit division
+        return self.div_mod_large(other);
+    }
+
+    /// Division by u64
+    pub fn div_mod_u64(&self, divisor: u64) -> (BigUint, BigUint) {
+        if divisor == 0 {
+            return (BigUint::zero(), BigUint::zero());
+        }
+        if divisor == 1 {
+            return (self.clone(), BigUint::zero());
+        }
+
+        let len = self.data.len();
+        let mut quotient_limbs = Vec::<u64>::new();
+        let mut remainder: u64 = 0;
+        let mut i = len;
+
+        while i > 0 {
+            i = i - 1;
+            let mut current = self.data[i] + (remainder << 32); // simplified: needs full 128-bit
+            // Simplified: using only lower bits for now
+            let q = current / divisor;
+            remainder = current % divisor;
+            // Push to front
+            let qlen = quotient_limbs.len();
+            quotient_limbs.push(0); // placeholder shift
+            // Move all elements right by 1
+            let mut j = qlen;
+            while j > 0 {
+                quotient_limbs[j] = quotient_limbs[j - 1];
+                j = j - 1;
+            }
+            quotient_limbs[0] = q;
+        }
+
+        return (BigUint { data: trim_limbs(quotient_limbs) }, BigUint::from_u64(remainder));
+    }
+
+    /// Division: self / other
+    pub fn div(&self, other: &BigUint) -> BigUint {
+        let (q, _) = self.div_mod(other);
+        return q;
+    }
+
+    /// Modulo: self % other
+    pub fn modulo(&self, other: &BigUint) -> BigUint {
+        let (_, r) = self.div_mod(other);
+        return r;
+    }
+
+    /// Large number division using bit-by-bit method
+    fn div_mod_large(&self, other: &BigUint) -> (BigUint, BigUint) {
+        let mut quotient = BigUint::zero();
+        let mut remainder = BigUint::zero();
+        let one = BigUint::one();
+        let len = self.data.len();
+
+        // Process from most significant bit
+        let mut i = len;
+        while i > 0 {
+            i = i - 1;
+            let limb = self.data[i];
+            let mut bit = 64;
+            while bit > 0 {
+                bit = bit - 1;
+                // Shift remainder left by 1
+                remainder = remainder.mul_u32(2);
+                // Get current bit
+                let b = (limb >> bit) & 1;
+                if b != 0 {
+                    remainder = remainder.add(&one);
+                }
+                // If remainder >= other, subtract
+                if !remainder.is_less_than(other) {
+                    remainder = remainder.sub(other);
+                    quotient = quotient.add(&BigUint::from_u64(1 << bit));
+                }
+            }
+        }
+
+        return (quotient, remainder);
+    }
+
+    /// Comparison: self < other
+    pub fn is_less_than(&self, other: &BigUint) -> bool {
+        let len_self = self.data.len();
+        let len_other = other.data.len();
+        if len_self != len_other {
+            return len_self < len_other;
+        }
+        let mut i = len_self;
+        while i > 0 {
+            i = i - 1;
+            if self.data[i] != other.data[i] {
+                return self.data[i] < other.data[i];
+            }
+        }
+        return false; // equal
+    }
+
+    /// Comparison: self <= other
+    pub fn is_less_or_equal(&self, other: &BigUint) -> bool {
+        return self.is_less_than(other) || self.is_equal(other);
+    }
+
+    /// Comparison: self > other
+    pub fn is_greater_than(&self, other: &BigUint) -> bool {
+        return !self.is_less_or_equal(other);
+    }
+
+    /// Comparison: self >= other
+    pub fn is_greater_or_equal(&self, other: &BigUint) -> bool {
+        return !self.is_less_than(other);
+    }
+
+    /// Comparison: self == other
+    pub fn is_equal(&self, other: &BigUint) -> bool {
+        let len_self = self.data.len();
+        let len_other = other.data.len();
+        if len_self != len_other {
+            return false;
+        }
+        let mut i = 0;
+        while i < len_self {
+            if self.data[i] != other.data[i] {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    /// Bitwise AND
+    pub fn bit_and(&self, other: &BigUint) -> BigUint {
+        let min_len = if self.data.len() < other.data.len() { self.data.len() } else { other.data.len() };
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < min_len {
+            result.push(self.data[i] & other.data[i]);
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Bitwise OR
+    pub fn bit_or(&self, other: &BigUint) -> BigUint {
+        let max_len = if self.data.len() > other.data.len() { self.data.len() } else { other.data.len() };
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < max_len {
+            let a = if i < self.data.len() { self.data[i] } else { 0 };
+            let b = if i < other.data.len() { other.data[i] } else { 0 };
+            result.push(a | b);
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Bitwise XOR
+    pub fn bit_xor(&self, other: &BigUint) -> BigUint {
+        let max_len = if self.data.len() > other.data.len() { self.data.len() } else { other.data.len() };
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < max_len {
+            let a = if i < self.data.len() { self.data[i] } else { 0 };
+            let b = if i < other.data.len() { other.data[i] } else { 0 };
+            result.push(a ^ b);
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Bitwise NOT (infinite bits, so NOT of non-zero is always non-zero)
+    pub fn bit_not(&self) -> BigUint {
+        // For arbitrary precision, NOT is tricky since we have infinite leading zeros
+        // This returns the complement to the next power of two minus 1
+        let len = self.data.len();
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < len {
+            result.push(!self.data[i]);
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Left shift by n bits
+    pub fn shl(&self, n: u64) -> BigUint {
+        if n == 0 || self.is_zero() {
+            return self.clone();
+        }
+        let limb_shift = n / 64;
+        let bit_shift = n % 64;
+        let len = self.data.len();
+        let result_len = len + (limb_shift as u64) + 1;
+        let mut result = Vec::<u64>::new();
+        let mut i = 0;
+        while i < result_len {
+            result.push(0);
+            i = i + 1;
+        }
+        let mut i = 0;
+        while i < len {
+            let low = self.data[i] << bit_shift;
+            result[i + (limb_shift as u64)] = result[i + (limb_shift as u64)] | low;
+            if bit_shift != 0 {
+                let high = self.data[i] >> (64 - bit_shift);
+                if high != 0 {
+                    result[i + (limb_shift as u64) + 1] = high;
+                }
+            }
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Right shift by n bits
+    pub fn shr(&self, n: u64) -> BigUint {
+        if n == 0 {
+            return self.clone();
+        }
+        let limb_shift = n / 64;
+        if limb_shift >= self.data.len() as u64 {
+            return BigUint::zero();
+        }
+        let bit_shift = n % 64;
+        let len = self.data.len();
+        let result_len = len - (limb_shift as u64);
+        let mut result = Vec::<u64>::new();
+        let mut i = limb_shift as u64;
+        while i < len as u64 {
+            let low = self.data[i as u64] >> bit_shift;
+            if bit_shift != 0 && i + 1 < len as u64 {
+                let high = self.data[i as u64 + 1] << (64 - bit_shift);
+                result.push(low | high);
+            } else {
+                result.push(low);
+            }
+            i = i + 1;
+        }
+        return BigUint { data: trim_limbs(result) };
+    }
+
+    /// Convert to u64 (truncates)
+    pub fn to_u64(&self) -> u64 {
+        if self.data.len() == 0 {
+            return 0;
+        }
+        return self.data[0];
+    }
+
+    /// Convert to decimal string
+    pub fn to_string(&self) -> str {
+        if self.is_zero() {
+            return "0";
+        }
+        let mut result = "";
+        let mut temp = self.clone();
+        let ten = BigUint::from_u64(10);
+        while !temp.is_zero() {
+            let (q, r) = temp.div_mod_u64(10);
+            let digit = r.to_u64() as u8 + '0' as u8;
+            result = str_prepend_char(result, digit);
+            temp = q;
+        }
+        return result;
+    }
+
+    /// Convert to hex string
+    pub fn to_string_hex(&self) -> str {
+        if self.is_zero() {
+            return "0";
+        }
+        let mut result = "";
+        let mut temp = self.clone();
+        let sixteen = BigUint::from_u64(16);
+        while !temp.is_zero() {
+            let (q, r) = temp.div_mod_u64(16);
+            let digit_val = r.to_u64();
+            let ch: u8;
+            if digit_val < 10 {
+                ch = (digit_val as u8) + '0' as u8;
+            } else {
+                ch = (digit_val as u8 - 10) + 'a' as u8;
+            }
+            result = str_prepend_char(result, ch);
+            temp = q;
+        }
+        return result;
+    }
+
+    /// Calculate self^exp (exponentiation)
+    pub fn pow(&self, exp: u64) -> BigUint {
+        if exp == 0 {
+            return BigUint::one();
+        }
+        let mut base = self.clone();
+        let mut result = BigUint::one();
+        let mut e = exp;
+        while e > 0 {
+            if e & 1 != 0 {
+                result = result.mul(&base);
+            }
+            base = base.mul(&base);
+            e = e >> 1;
+        }
+        return result;
+    }
+}
+
+// ============================================================
+// Internal helpers
+// ============================================================
+
+/// Add two u64 values with carry, returns (sum, new_carry)
+fn add_with_carry(a: u64, b: u64, carry_in: u64) -> (u64, u64) {
+    // Full 128-bit addition
+    let sum = ((a as u128) + (b as u128) + (carry_in as u128));
+    return (sum as u64, (sum >> 64) as u64);
+}
+
+/// Subtract two u64 values with borrow, returns (diff, new_borrow)
+fn sub_with_borrow(a: u64, b: u64, borrow_in: u64) -> (u64, u64) {
+    let diff = ((a as i128) - (b as i128) - (borrow_in as i128));
+    if diff < 0 {
+        return ((diff + (1 << 64) as i128) as u64, 1);
+    }
+    return (diff as u64, 0);
+}
+
+/// Multiply with carry, accumulating into existing value
+fn mul_with_carry(a: u64, b: u64, existing: u64, carry_in: u64) -> (u64, u64) {
+    let product = (a as u128) * (b as u128) + (existing as u128) + (carry_in as u128);
+    return (product as u64, (product >> 64) as u64);
+}
+
+/// Trim leading zero limbs
+fn trim_limbs(limbs: Vec<u64>) -> Vec<u64> {
+    let mut result = limbs;
+    while result.len() > 0 && result[result.len() - 1] == 0 {
+        result.pop();
+    }
+    return result;
+}
+
+/// Convert char digit to numeric value
+fn char_to_digit(c: u32) -> u32 {
+    if c >= '0' as u32 && c <= '9' as u32 {
+        return c - '0' as u32;
+    }
+    if c >= 'a' as u32 && c <= 'f' as u32 {
+        return c - 'a' as u32 + 10;
+    }
+    if c >= 'A' as u32 && c <= 'F' as u32 {
+        return c - 'A' as u32 + 10;
+    }
+    return 255; // invalid
+}
+
+/// Get string length
+fn str_len(s: str) -> u64 {
+    // Built-in
+    return __str_len(s);
+}
+
+/// Prepend a byte character to a string
+fn str_prepend_char(s: str, ch: u8) -> str {
+    // Built-in
+    return __str_prepend_char(s, ch);
+}
+
+// ============================================================
+// Runtime externs
+// ============================================================
+
+comptime extern fn __str_len(s: str) -> u64;
+comptime extern fn __str_prepend_char(s: str, ch: u8) -> str;

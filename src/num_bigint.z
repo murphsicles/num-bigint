@@ -1,0 +1,108 @@
+// num-bigint 0.4.6 for Zeta
+// Arbitrary-precision big integer arithmetic
+// Port of https://github.com/rust-num/num-bigint
+
+pub use biguint::BigUint;
+pub use bigint::BigInt;
+
+// ============================================================
+// Convenience constructors
+// ============================================================
+
+/// Create a BigUint from u64
+pub fn BigUint_from_u64(value: u64) -> BigUint {
+    return BigUint::from_u64(value);
+}
+
+/// Create a BigUint from a decimal string
+pub fn BigUint_from_str(s: str) -> BigUint {
+    return BigUint::from_str(s, 10);
+}
+
+/// Create a BigInt from i64
+pub fn BigInt_from_i64(value: i64) -> BigInt {
+    return BigInt::from_i64(value);
+}
+
+/// Create a BigInt from a decimal string
+pub fn BigInt_from_str(s: str) -> BigInt {
+    return BigInt::from_str(s, 10);
+}
+
+// ============================================================
+// Arithmetic operator wrappers
+// ============================================================
+
+/// Add two BigUint values
+pub fn add_biguint(a: &BigUint, b: &BigUint) -> BigUint {
+    return a.add(b);
+}
+
+/// Subtract two BigUint values (a - b)
+pub fn sub_biguint(a: &BigUint, b: &BigUint) -> BigUint {
+    return a.sub(b);
+}
+
+/// Multiply two BigUint values
+pub fn mul_biguint(a: &BigUint, b: &BigUint) -> BigUint {
+    return a.mul(b);
+}
+
+/// Divide two BigUint values (a / b)
+pub fn div_biguint(a: &BigUint, b: &BigUint) -> BigUint {
+    return a.div(b);
+}
+
+/// Modulo of BigUint values (a % b)
+pub fn mod_biguint(a: &BigUint, b: &BigUint) -> BigUint {
+    return a.modulo(b);
+}
+
+/// Calculate a^exp
+pub fn pow_biguint(a: &BigUint, exp: u64) -> BigUint {
+    return a.pow(exp);
+}
+
+/// Add two BigInt values
+pub fn add_bigint(a: &BigInt, b: &BigInt) -> BigInt {
+    return a.add(b);
+}
+
+/// Subtract two BigInt values (a - b)
+pub fn sub_bigint(a: &BigInt, b: &BigInt) -> BigInt {
+    return a.sub(b);
+}
+
+/// Multiply two BigInt values
+pub fn mul_bigint(a: &BigInt, b: &BigInt) -> BigInt {
+    return a.mul(b);
+}
+
+/// Divide two BigInt values (a / b)
+pub fn div_bigint(a: &BigInt, b: &BigInt) -> BigInt {
+    return a.div(b);
+}
+
+/// Compare BigInt values returns -1, 0, or 1
+pub fn cmp_bigint(a: &BigInt, b: &BigInt) -> i32 {
+    return a.cmp(b);
+}
+
+// ============================================================
+// Utility
+// ============================================================
+
+/// Return true if BigUint a < BigUint b
+pub fn less_than(a: &BigUint, b: &BigUint) -> bool {
+    return a.is_less_than(b);
+}
+
+/// Return true if BigUint a == BigUint b
+pub fn equal(a: &BigUint, b: &BigUint) -> bool {
+    return a.is_equal(b);
+}
+
+/// Return true if BigUint a > BigUint b
+pub fn greater_than(a: &BigUint, b: &BigUint) -> bool {
+    return a.is_greater_than(b);
+}
